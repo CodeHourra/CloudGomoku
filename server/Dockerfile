@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM mirror.ccs.tencentyun.com/library/node:18-alpine
 
 WORKDIR /app
 
