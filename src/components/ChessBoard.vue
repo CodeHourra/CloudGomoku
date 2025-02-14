@@ -15,7 +15,7 @@ const winner = ref(null);
 
 // 连接WebSocket服务器
 const connectWebSocket = () => {
-  ws.value = new WebSocket('ws://${window.location.hostname}:3000');
+  ws.value = new WebSocket(`ws://${window.location.hostname}:3000`);
 
   ws.value.onmessage = (event) => {
     const data = JSON.parse(event.data);
