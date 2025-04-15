@@ -19,6 +19,7 @@ const heartbeatInterval = ref(null);
 const board = ref(Array(15).fill(null).map(() => Array(15).fill(null)));
 const currentPlayer = ref('black'); // 黑方先手
 const winner = ref(null);
+const lastMove = ref({ row: null, col: null });
 
 // 发送心跳包
 const sendHeartbeat = () => {
@@ -68,6 +69,7 @@ const connectWebSocket = () => {
         board.value[data.row][data.col] = { color: data.color };
         currentPlayer.value = data.color === 'black' ? 'white' : 'black';
         isMyTurn.value = currentPlayer.value === playerColor.value;
+        lastMove.value = { row: data.row, col: data.col };
         checkWin(data.row, data.col);
         break;
       
@@ -113,6 +115,7 @@ const placePiece = (row, col) => {
       row,
       col
     }));
+    lastMove.value = { row, col };
   } else {
     alert('连接已断开，请等待重连...');
   }
@@ -179,6 +182,7 @@ const resetGame = () => {
   playerColor.value = null;
   isMyTurn.value = false;
   isWaiting.value = true;
+  lastMove.value = { row: null, col: null };
   
   // 重新连接WebSocket
   if (ws.value) {
@@ -226,6 +230,7 @@ onUnmounted(() => {
           :cell="cell"
           :row="rowIndex"
           :col="colIndex"
+          :is-last-move="lastMove.row === rowIndex && lastMove.col === colIndex"
           @place-piece="placePiece"
         />
       </div>

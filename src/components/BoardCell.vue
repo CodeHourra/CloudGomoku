@@ -13,6 +13,10 @@ defineProps({
   col: {
     type: Number,
     required: true
+  },
+  isLastMove: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -22,6 +26,7 @@ const emit = defineEmits(['place-piece']);
 <template>
   <div 
     class="board-cell"
+    :class="{ 'last-move': isLastMove }"
     @click="emit('place-piece', row, col)"
   >
     <ChessPiece v-if="cell" :color="cell.color" />
@@ -37,6 +42,25 @@ const emit = defineEmits(['place-piece']);
   justify-content: center;
   align-items: center;
   cursor: crosshair;
+}
+
+.board-cell:hover {
+  background-color: rgba(139, 69, 19, 0.1);
+}
+
+.board-cell.last-move .chess-piece {
+  animation: blink 0.8s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.9);
+  }
 }
 
 .board-cell::before {
