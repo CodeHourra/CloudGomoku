@@ -1,5 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
+import GameStatus from './GameStatus.vue';
+import BoardCell from './BoardCell.vue';
 
 // 初始化WebSocket连接
 const ws = ref(null);
@@ -7,20 +9,50 @@ const roomId = ref(null);
 const playerColor = ref(null);
 const isMyTurn = ref(false);
 const isWaiting = ref(true);
+const connectionStatus = ref('connecting'); // 'connecting', 'connected', 'disconnected'
+const reconnectAttempts = ref(0);
+const maxReconnectAttempts = 5;
+const reconnectTimeout = ref(null);
+const heartbeatInterval = ref(null);
 
 // 初始化棋盘状态
 const board = ref(Array(15).fill(null).map(() => Array(15).fill(null)));
 const currentPlayer = ref('black'); // 黑方先手
 const winner = ref(null);
 
+// 发送心跳包
+const sendHeartbeat = () => {
+  if (ws.value && ws.value.readyState === WebSocket.OPEN) {
+    ws.value.send(JSON.stringify({ type: 'ping' }));
+  }
+};
+
 // 连接WebSocket服务器
 const connectWebSocket = () => {
+  if (ws.value) {
+    ws.value.close();
+  }
+
+  connectionStatus.value = 'connecting';
   ws.value = new WebSocket(`ws://${window.location.hostname}:3000`);
+
+  ws.value.onopen = () => {
+    console.log('WebSocket连接已建立');
+    connectionStatus.value = 'connected';
+    reconnectAttempts.value = 0;
+    
+    // 启动心跳检测
+    heartbeatInterval.value = setInterval(sendHeartbeat, 30000);
+  };
 
   ws.value.onmessage = (event) => {
     const data = JSON.parse(event.data);
     
     switch (data.type) {
+      case 'pong':
+        // 收到心跳响应，连接正常
+        break;
+        
       case 'waiting':
         isWaiting.value = true;
         break;
@@ -47,8 +79,26 @@ const connectWebSocket = () => {
   };
 
   ws.value.onclose = () => {
-    alert('与服务器的连接已断开');
-    resetGame();
+    console.log('WebSocket连接已关闭');
+    connectionStatus.value = 'disconnected';
+    clearInterval(heartbeatInterval.value);
+    
+    // 尝试重连
+    if (reconnectAttempts.value < maxReconnectAttempts) {
+      reconnectAttempts.value++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.value), 30000);
+      console.log(`将在 ${delay/1000} 秒后尝试重连 (第 ${reconnectAttempts.value} 次)`);
+      
+      reconnectTimeout.value = setTimeout(() => {
+        connectWebSocket();
+      }, delay);
+    } else {
+      alert('无法连接到服务器，请刷新页面重试');
+    }
+  };
+
+  ws.value.onerror = (error) => {
+    console.error('WebSocket错误:', error);
   };
 };
 
@@ -56,12 +106,16 @@ const connectWebSocket = () => {
 const placePiece = (row, col) => {
   if (!isMyTurn.value || board.value[row][col] || winner.value) return;
   
-  ws.value.send(JSON.stringify({
-    type: 'move',
-    roomId: roomId.value,
-    row,
-    col
-  }));
+  if (ws.value && ws.value.readyState === WebSocket.OPEN) {
+    ws.value.send(JSON.stringify({
+      type: 'move',
+      roomId: roomId.value,
+      row,
+      col
+    }));
+  } else {
+    alert('连接已断开，请等待重连...');
+  }
 };
 
 // 检查是否获胜
@@ -141,38 +195,41 @@ onUnmounted(() => {
   if (ws.value) {
     ws.value.close();
   }
+  clearInterval(heartbeatInterval.value);
+  clearTimeout(reconnectTimeout.value);
 });
 </script>
 
 <template>
   <div class="chess-board">
-    <div v-if="isWaiting" class="waiting-message">
-      等待对手加入...
+    <div class="connection-status" :class="connectionStatus">
+      {{ 
+        connectionStatus === 'connecting' ? '正在连接...' :
+        connectionStatus === 'connected' ? '已连接' :
+        '连接已断开，正在重连...'
+      }}
     </div>
-    <template v-else>
-      <div v-if="winner" class="winner-message">
-        {{ winner === playerColor ? '你赢了！' : '对手赢了！' }}
-        <button @click="resetGame" class="reset-button">重新开始</button>
+    
+    <GameStatus
+      :is-waiting="isWaiting"
+      :winner="winner"
+      :player-color="playerColor"
+      :is-my-turn="isMyTurn"
+      @reset="resetGame"
+    />
+    
+    <div v-if="!isWaiting" class="board-container">
+      <div v-for="(row, rowIndex) in board" :key="rowIndex" class="board-row">
+        <BoardCell
+          v-for="(cell, colIndex) in row"
+          :key="colIndex"
+          :cell="cell"
+          :row="rowIndex"
+          :col="colIndex"
+          @place-piece="placePiece"
+        />
       </div>
-      <div class="game-info">
-        <div>你的颜色: {{ playerColor === 'black' ? '黑方' : '白方' }}</div>
-        <div class="current-player">
-          {{ isMyTurn ? '轮到你下棋' : '等待对手下棋' }}
-        </div>
-      </div>
-      <div class="board-container">
-        <div v-for="(row, rowIndex) in board" :key="rowIndex" class="board-row">
-          <div
-            v-for="(cell, colIndex) in row"
-            :key="colIndex"
-            class="board-cell"
-            @click="placePiece(rowIndex, colIndex)"
-          >
-            <div v-if="cell" class="chess-piece" :class="cell.color"></div>
-          </div>
-        </div>
-      </div>
-    </template>
+    </div>
   </div>
 </template>
 
@@ -188,144 +245,36 @@ onUnmounted(() => {
   padding: 20px;
 }
 
+.connection-status {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 0.8em;
+}
+
+.connection-status.connecting {
+  background-color: #f0ad4e;
+  color: white;
+}
+
+.connection-status.connected {
+  background-color: #5cb85c;
+  color: white;
+}
+
+.connection-status.disconnected {
+  background-color: #d9534f;
+  color: white;
+}
+
+.board-container {
+  display: flex;
+  flex-direction: column;
+}
+
 .board-row {
   display: flex;
-}
-
-.board-cell {
-  width: min(4vw, 40px);
-  height: min(4vw, 40px);
-  position: relative;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  cursor: crosshair;
-}
-
-.board-cell::before {
-  content: '';
-  position: absolute;
-  width: 100%;
-  height: 1px;
-  background-color: #8b4513;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.board-cell::after {
-  content: '';
-  position: absolute;
-  height: 100%;
-  width: 1px;
-  background-color: #8b4513;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.chess-piece {
-  width: min(3.5vw, 35px);
-  height: min(3.5vw, 35px);
-  border-radius: 50%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-weight: bold;
-  font-size: min(2.4vw, 24px);
-  border: 2px solid #8b4513;
-  background-color: #f4d03f;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-  position: absolute;
-  z-index: 1;
-  animation: dropIn 0.3s ease-out;
-  transition: transform 0.2s ease;
-}
-
-.chess-piece:hover {
-  transform: scale(1.1);
-}
-
-@keyframes dropIn {
-  from {
-    transform: translateY(-20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.winner .chess-piece {
-  animation: blink 1s infinite;
-}
-
-@keyframes blink {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-.board-cell {
-  width: min(4vw, 40px);
-  height: min(4vw, 40px);
-  position: relative;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  cursor: pointer;
-}
-
-.red {
-  background-color: #ff6b6b;
-  color: #fff;
-}
-
-.black {
-  background-color: #2f3542;
-  color: #fff;
-}
-
-.selected {
-  background-color: rgba(255, 255, 0, 0.3);
-}
-
-.valid-move {
-  background-color: rgba(0, 255, 0, 0.2);
-}
-
-.waiting-message {
-  font-size: 1.5em;
-  color: #666;
-  margin: 20px 0;
-}
-
-.game-info {
-  margin-bottom: 20px;
-  font-size: 1.2em;
-  color: #333;
-}
-
-.winner-message {
-  font-size: 1.5em;
-  color: #2c3e50;
-  margin-bottom: 20px;
-}
-
-.reset-button {
-  margin-top: 10px;
-  padding: 8px 16px;
-  font-size: 1em;
-  background-color: #42b983;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.reset-button:hover {
-  background-color: #3aa876;
 }
 </style>

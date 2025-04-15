@@ -10,11 +10,29 @@ const rooms = new Map();
 // 等待配对的玩家
 let waitingPlayer = null;
 
+// 心跳超时时间（毫秒）
+const HEARTBEAT_TIMEOUT = 60000;
+
 wss.on('connection', (ws) => {
   console.log('新玩家连接');
 
   // 为玩家生成唯一ID
   ws.playerId = Math.random().toString(36).substring(7);
+  
+  // 设置心跳检测
+  let heartbeatTimeout = null;
+  
+  const resetHeartbeat = () => {
+    if (heartbeatTimeout) {
+      clearTimeout(heartbeatTimeout);
+    }
+    heartbeatTimeout = setTimeout(() => {
+      console.log(`玩家 ${ws.playerId} 心跳超时`);
+      ws.terminate();
+    }, HEARTBEAT_TIMEOUT);
+  };
+  
+  resetHeartbeat();
 
   // 如果有等待的玩家，创建新房间
   if (waitingPlayer) {
@@ -52,30 +70,39 @@ wss.on('connection', (ws) => {
     try {
       const data = JSON.parse(message);
       
-      if (data.type === 'move') {
-        const room = rooms.get(data.roomId);
-        if (!room) return;
+      switch (data.type) {
+        case 'ping':
+          // 重置心跳计时器
+          resetHeartbeat();
+          // 发送pong响应
+          ws.send(JSON.stringify({ type: 'pong' }));
+          break;
+          
+        case 'move':
+          const room = rooms.get(data.roomId);
+          if (!room) return;
 
-        // 验证是否轮到该玩家
-        if (room.currentPlayer !== ws) return;
+          // 验证是否轮到该玩家
+          if (room.currentPlayer !== ws) return;
 
-        // 更新棋盘状态
-        room.board[data.row][data.col] = {
-          color: room.players[0] === ws ? 'black' : 'white'
-        };
-
-        // 广播移动信息给两个玩家
-        room.players.forEach(player => {
-          player.send(JSON.stringify({
-            type: 'move',
-            row: data.row,
-            col: data.col,
+          // 更新棋盘状态
+          room.board[data.row][data.col] = {
             color: room.players[0] === ws ? 'black' : 'white'
-          }));
-        });
+          };
 
-        // 切换当前玩家
-        room.currentPlayer = room.players.find(p => p !== ws);
+          // 广播移动信息给两个玩家
+          room.players.forEach(player => {
+            player.send(JSON.stringify({
+              type: 'move',
+              row: data.row,
+              col: data.col,
+              color: room.players[0] === ws ? 'black' : 'white'
+            }));
+          });
+
+          // 切换当前玩家
+          room.currentPlayer = room.players.find(p => p !== ws);
+          break;
       }
     } catch (error) {
       console.error('处理消息时出错:', error);
@@ -84,6 +111,11 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     console.log('玩家断开连接');
+    
+    // 清除心跳计时器
+    if (heartbeatTimeout) {
+      clearTimeout(heartbeatTimeout);
+    }
     
     // 如果是等待的玩家断开连接
     if (waitingPlayer === ws) {
