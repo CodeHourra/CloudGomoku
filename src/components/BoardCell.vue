@@ -58,7 +58,7 @@ const emit = defineEmits(['place-piece']);
     transform: scale(1.1);
   }
   50% {
-    opacity: 0.6;
+    opacity: 0.7;
     transform: scale(0.9);
   }
 }
